@@ -1,0 +1,34 @@
+*****main*****
+Arithematic Operations:44
+Branch Operations:56
+Memory Operations:213
+
+*****makea*****
+Arithematic Operations:58
+Branch Operations:90
+Memory Operations:408
+
+*****conj_grad*****
+Arithematic Operations:109
+Branch Operations:135
+Memory Operations:675
+
+*****sprnvc*****
+Arithematic Operations:114
+Branch Operations:150
+Memory Operations:753
+
+*****vecset*****
+Arithematic Operations:116
+Branch Operations:159
+Memory Operations:802
+
+*****sparse*****
+Arithematic Operations:151
+Branch Operations:209
+Memory Operations:1090
+
+*****icnvrt*****
+Arithematic Operations:152
+Branch Operations:210
+Memory Operations:1096
