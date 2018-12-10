@@ -6,6 +6,7 @@
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/IR/CFG.h"
 #include <vector>
@@ -102,11 +103,11 @@ namespace {
 				}
 			}
 
-			vector<string> loops;
+			set<set<string>> loops;
 			for(auto edge: backEdge) {
 				string m=edge.second, n=edge.first;
 				set<string> Loop{m,n};
-				string temp="";
+				set<string> temp;
 				stack<string> Stack;
 				if(m!=n){
 					Stack.push(n);
@@ -122,39 +123,143 @@ namespace {
 					}
 				}
 				for(string s:Loop){
-					temp+=(s+",");
+					temp.insert(s);
 				}
-				loops.push_back(temp);
+				loops.insert(temp);
 			}
 
-			//Solution 2
-			for(int i=loops.size()-1;i>=0;i--){
-				int count=0,b=0;
-				vector<string> bb = split(loops[i],',');
-				for(string s:bb){
-					b++;
-					BasicBlock *block=stringToBlock[s];
-					for(auto &I:*block){
-						count++;
-					}
-				}
-				errs() << "Loop " << i << ": " << b << " basic blocks; " << count << " instructions" << "\n";
-			}
-
-			//Solution 3
-			for(int i=loops.size()-1;i>=0;i--){
-				for(int j=loops.size()-1;j>=0;j--){
-					if(i!=j && loops[i].find(loops[j])!=string::npos){
-						int x=j,y=i;
-						if(loops[i].size()<loops[j].size()){
-							y=j;x=i;
+			//Solution 1 Perfectly Nested.
+			set<set<string>> :: iterator it1,it2;
+			for(it1=loops.begin();it1!=loops.end();it1++){
+				for(it2=loops.begin();it2!=loops.end();it2++){
+					set<string> common;
+					set_intersection((*it1).begin(),(*it1).end(),(*it2).begin(),(*it2).end(),inserter(common,common.begin()));
+					if(common.size()>1 && common==*it2 && (*it1).size() != (*it2).size()){
+						set<string> outer,inner;
+						if((*it1).size()<(*it2).size()){
+							inner=*it1;
+							outer=*it2;
 						}
-						errs()<< "Loop " << x << " is nested within loop " << y << "\n";
+						else{
+							inner=*it2;
+							outer=*it1;
+						}
+						string outlast,inlast,inslast;
+						set<string> :: iterator t1,t2;
+						for(t1=outer.begin();t1!=outer.end();t1++){
+							errs() << *t1 << " ";
+							outlast=*t1;
+						}
+						errs() << "\n";
+						for(t2=inner.begin();t2!=inner.end();t2++){
+							inslast=inlast;
+							inlast=*t2;
+							errs() << *t2 << " ";
+						}
+						errs() << "\n";
+						BasicBlock *outerHeader = stringToBlock[*outer.begin()];
+						BasicBlock *outerLatch = stringToBlock[outlast];
+						BasicBlock* outerPreheader;
+						for (BasicBlock *pred : predecessors(outerHeader)) {
+							outerPreheader=pred;
+						}
+						BasicBlock* innerHeader = stringToBlock[*inner.begin()];
+						BasicBlock *innerLatch = stringToBlock[inlast];
+						BasicBlock* innerPreheader;
+						for (BasicBlock *pred : predecessors(innerHeader)) {
+							innerPreheader=pred;
+						}
+						BasicBlock *innerBody = stringToBlock[inslast];
+						BranchInst *outerHeaderBI = dyn_cast<BranchInst>(outerHeader->getTerminator());
+						bool nested=true;
+						if(!outerHeaderBI){
+							nested=false;
+						}
+						else{
+							int numSucc = outerHeaderBI->getNumSuccessors();
+							for(int s=0;s<numSucc;s++){
+								BasicBlock *succ = outerHeaderBI->getSuccessor(s);
+								
+								//Check not ret statement basic block.
+								int instrCount=0;
+								for(auto &I:*succ){
+                		                                        instrCount++;
+		                                                }
+								if(instrCount==1){
+									continue;
+								}
+
+								if(innerPreheader != succ && succ != innerHeader && succ != outerLatch){
+									nested=false;
+								}
+							}
+						}
+						if(nested){
+							errs() << "Found a perfectly nested loop pair!!\n";
+						}
+						else{
+							errs() << "Found an imperfectly nested loop pair!!\n";
+						}
+						
+
+						//Solution 2
+						Instruction *instr,*temp;
+						for(auto &I:*outerPreheader){
+							instr=temp;
+							temp=&I;
+						}
+						Value *val = instr->getOperand(1);
+						if(val->isUsedInBasicBlock(innerPreheader)||val->isUsedInBasicBlock(innerHeader)||val->isUsedInBasicBlock(innerLatch)){
+							errs() << "Dependence Found!\n";
+						}
+						else{
+							errs() << "No Dependence!\n";
+						}
+						interchangeInst(outerPreheader,innerPreheader);
+						innerHeader->moveAfter(outerPreheader);
+						outerHeader->moveAfter(innerPreheader);
+						innerLatch->moveAfter(outerLatch);
+						outerLatch->moveAfter(innerBody);
 					}
 				}
 			}
-
-			return false;
+			return true;
+		}
+		
+		void interchangeInst(BasicBlock *outer, BasicBlock *inner){
+			Instruction *instr,*temp;
+                        for(auto &I:*outer){
+                        	instr=temp;
+                                temp=&I;
+                        }
+                        Value *op2 = instr->getOperand(1);
+			Value *o1,*o2;
+			User *itr1,*itr2;
+			for(auto it = op2->users().begin();it != op2->users().end();it++){
+				if((*it)->getNumOperands()>1){
+					o1 = (*it)->getOperand(0);
+					o2 = (*it)->getOperand(1);
+					itr1 = *it;
+				}
+			}
+                       	 
+			for(auto &I:*inner){
+                        	instr=temp;
+                                temp=&I;
+                        }
+                        op2 = instr->getOperand(1);
+			Value *o5,*o6;
+			for(auto it = op2->users().begin();it != op2->users().end();it++){
+				if((*it)->getNumOperands()>1){
+					o5 = (*it)->getOperand(0);
+					o6 = (*it)->getOperand(1);
+					itr2 = (*it);
+				}
+			}
+			itr1->setOperand(0,o5);
+			itr1->setOperand(1,o6);
+			itr2->setOperand(0,o1);
+			itr2->setOperand(1,o2);
 		}
 	};
 }
