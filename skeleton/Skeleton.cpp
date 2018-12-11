@@ -128,7 +128,7 @@ namespace {
 				loops.insert(temp);
 			}
 
-			//Solution 1 Perfectly Nested.
+			//Find all pairs of nested loops.
 			set<set<string>> :: iterator it1,it2;
 			for(it1=loops.begin();it1!=loops.end();it1++){
 				for(it2=loops.begin();it2!=loops.end();it2++){
@@ -144,25 +144,25 @@ namespace {
 							inner=*it2;
 							outer=*it1;
 						}
-						string outlast,inlast,inslast;
+						string outlast,inlast,inslast,outslast;
 						set<string> :: iterator t1,t2;
 						for(t1=outer.begin();t1!=outer.end();t1++){
-							errs() << *t1 << " ";
+							outslast=outlast;
 							outlast=*t1;
 						}
-						errs() << "\n";
 						for(t2=inner.begin();t2!=inner.end();t2++){
 							inslast=inlast;
 							inlast=*t2;
-							errs() << *t2 << " ";
 						}
-						errs() << "\n";
+
+						// Finding Preheaders, Headers, Body and Latches of outer and inner loops.
 						BasicBlock *outerHeader = stringToBlock[*outer.begin()];
 						BasicBlock *outerLatch = stringToBlock[outlast];
 						BasicBlock* outerPreheader;
 						for (BasicBlock *pred : predecessors(outerHeader)) {
 							outerPreheader=pred;
 						}
+						BasicBlock *outerBSS = stringToBlock[outslast];
 						BasicBlock* innerHeader = stringToBlock[*inner.begin()];
 						BasicBlock *innerLatch = stringToBlock[inlast];
 						BasicBlock* innerPreheader;
@@ -170,69 +170,102 @@ namespace {
 							innerPreheader=pred;
 						}
 						BasicBlock *innerBody = stringToBlock[inslast];
-						BranchInst *outerHeaderBI = dyn_cast<BranchInst>(outerHeader->getTerminator());
-						bool nested=true;
-						if(!outerHeaderBI){
-							nested=false;
-						}
-						else{
-							int numSucc = outerHeaderBI->getNumSuccessors();
-							for(int s=0;s<numSucc;s++){
-								BasicBlock *succ = outerHeaderBI->getSuccessor(s);
-								
-								//Check not ret statement basic block.
-								int instrCount=0;
-								for(auto &I:*succ){
-                		                                        instrCount++;
-		                                                }
-								if(instrCount==1){
-									continue;
-								}
 
-								if(innerPreheader != succ && succ != innerHeader && succ != outerLatch){
-									nested=false;
-								}
-							}
-						}
+						// Solution 1 Check perfect nesting.
+						bool nested=checkPerfectNesting(outerHeader, outerLatch, innerPreheader, innerHeader);
 						if(nested){
 							errs() << "Found a perfectly nested loop pair!!\n";
 						}
 						else{
 							errs() << "Found an imperfectly nested loop pair!!\n";
 						}
-						
 
-						//Solution 2
-						Instruction *instr,*temp;
-						for(auto &I:*outerPreheader){
-							instr=temp;
-							temp=&I;
-						}
-						Value *val = instr->getOperand(1);
-						if(val->isUsedInBasicBlock(innerPreheader)||val->isUsedInBasicBlock(innerHeader)||val->isUsedInBasicBlock(innerLatch)){
+
+						//Solution 2 Check if loop index variable depend on each other.
+						Value *val = findOperandFromOuterLoop(outerPreheader);
+						bool isDependence = findUsageInInnerLoop(val, innerPreheader, innerHeader, innerLatch);
+						if(isDependence){
 							errs() << "Dependence Found!\n";
 						}
 						else{
 							errs() << "No Dependence!\n";
 						}
-						interchangeInst(outerPreheader,innerPreheader);
-						innerHeader->moveAfter(outerPreheader);
-						outerHeader->moveAfter(innerPreheader);
-						innerLatch->moveAfter(outerLatch);
-						outerLatch->moveAfter(innerBody);
+
+						//Saving operand of return block for future use.
+						Instruction *ret;
+						for(auto &I:*outerHeader){
+							ret=&I;
+						}
+						BranchInst *retBI = dyn_cast<BranchInst>(ret);
+						BasicBlock *retBlock = retBI->getSuccessor(1);
+
+						//Solution 3 Interchange outer and inner loop pairs.
+						interchangePreheaderInstructions(outerPreheader,innerPreheader);
+						moveBasicBlocks(outerPreheader, outerHeader, outerLatch, innerPreheader, innerHeader, innerBody, innerLatch);
+						moveBranches(outerPreheader, outerHeader, outerBSS, outerLatch, innerPreheader, innerHeader, innerBody, innerLatch, retBlock);
 					}
 				}
 			}
 			return true;
 		}
-		
-		void interchangeInst(BasicBlock *outer, BasicBlock *inner){
+
+		/* Method to check if a loop pair is perfectly nested */
+		bool checkPerfectNesting(BasicBlock *outerHeader, BasicBlock* outerLatch, BasicBlock* innerPreheader, BasicBlock* innerHeader){
+			bool nested=true;
+			BranchInst *outerHeaderBI = dyn_cast<BranchInst>(outerHeader->getTerminator());
+			if(!outerHeaderBI){
+				nested=false;
+			}
+			else{
+				int numSucc = outerHeaderBI->getNumSuccessors();
+				for(int s=0;s<numSucc;s++){
+					BasicBlock *succ = outerHeaderBI->getSuccessor(s);
+
+					//Check not ret statement basic block.
+					int instrCount=0;
+					for(auto &I:*succ){
+						instrCount++;
+					}
+					if(instrCount==1){
+						continue;
+					}
+
+					if(innerPreheader != succ && succ != innerHeader && succ != outerLatch){
+						nested=false;
+					}
+				}
+			}
+			return nested;
+		}
+
+		/* Method to find operand from outer preheader*/
+		Value* findOperandFromOuterLoop(BasicBlock* outerPreheader){
 			Instruction *instr,*temp;
-                        for(auto &I:*outer){
-                        	instr=temp;
-                                temp=&I;
-                        }
-                        Value *op2 = instr->getOperand(1);
+			for(auto &I:*outerPreheader){
+				instr=temp;
+				temp=&I;
+			}
+			return instr->getOperand(1);
+		}
+
+		/* Method to check if an operand is present in inner loop basic blocks. */
+		bool findUsageInInnerLoop(Value *val, BasicBlock *innerPreheader, BasicBlock* innerHeader, BasicBlock* innerLatch){
+			if(val->isUsedInBasicBlock(innerPreheader)||val->isUsedInBasicBlock(innerHeader)||val->isUsedInBasicBlock(innerLatch)){
+				return true;			
+			}
+			else{
+				return false;
+			}
+		} 
+
+		/* Method to interchange operands between outer and inner preheader for loop interchange. */
+		void interchangePreheaderInstructions(BasicBlock *outer, BasicBlock *inner){
+			Instruction *instr,*temp;
+			for(auto &I:*outer){
+				instr=temp;
+				temp=&I;
+			}
+			Value *op2 = instr->getOperand(1);
 			Value *o1,*o2;
 			User *itr1,*itr2;
 			for(auto it = op2->users().begin();it != op2->users().end();it++){
@@ -242,12 +275,12 @@ namespace {
 					itr1 = *it;
 				}
 			}
-                       	 
+
 			for(auto &I:*inner){
-                        	instr=temp;
-                                temp=&I;
-                        }
-                        op2 = instr->getOperand(1);
+				instr=temp;
+				temp=&I;
+			}
+			op2 = instr->getOperand(1);
 			Value *o5,*o6;
 			for(auto it = op2->users().begin();it != op2->users().end();it++){
 				if((*it)->getNumOperands()>1){
@@ -260,6 +293,43 @@ namespace {
 			itr1->setOperand(1,o6);
 			itr2->setOperand(0,o1);
 			itr2->setOperand(1,o2);
+		}
+
+		/* Method to move basic blocks to correct position for loop interchange. */
+		void moveBasicBlocks(BasicBlock* outerPreheader, BasicBlock* outerHeader, BasicBlock* outerLatch, BasicBlock* innerPreheader, BasicBlock* innerHeader, BasicBlock* innerBody, BasicBlock* innerLatch){	
+			innerHeader->moveAfter(outerPreheader);
+			outerHeader->moveAfter(innerPreheader);
+			innerLatch->moveAfter(outerLatch);
+			outerLatch->moveAfter(innerBody);
+		}
+
+		/* Util method to set branch successor of basic block */
+		void setBasicBlockSuccessor(BasicBlock *prev, BasicBlock* next){
+			BranchInst *prevBI = dyn_cast<BranchInst>(prev->getTerminator());
+			if(prevBI){
+				prevBI->setSuccessor(0, next);
+			}
+		}
+
+		void moveBranches(BasicBlock* outerPreheader, BasicBlock* outerHeader, BasicBlock* outerBSS, BasicBlock* outerLatch, BasicBlock* innerPreheader, BasicBlock* innerHeader, BasicBlock* innerBody, BasicBlock* innerLatch, BasicBlock *retBlock){
+			setBasicBlockSuccessor(outerPreheader, innerHeader);
+			setBasicBlockSuccessor(innerPreheader, outerHeader);
+			setBasicBlockSuccessor(innerBody, outerLatch);
+			setBasicBlockSuccessor(outerLatch, outerBSS);
+			setBasicBlockSuccessor(outerBSS, innerLatch);
+			setBasicBlockSuccessor(innerLatch, retBlock);
+			//Set both branches of inner Header.
+			BranchInst *ihBI = dyn_cast<BranchInst>(innerHeader->getTerminator());
+			if(ihBI){
+				ihBI->setSuccessor(0, innerPreheader);
+				ihBI->setSuccessor(1, retBlock);
+			}
+			//Set both branches of outer Header.
+			BranchInst *ohBI = dyn_cast<BranchInst>(outerHeader->getTerminator());
+			if(ohBI){
+				ohBI->setSuccessor(0, innerBody);
+				ohBI->setSuccessor(1, outerBSS);
+			}
 		}
 	};
 }
