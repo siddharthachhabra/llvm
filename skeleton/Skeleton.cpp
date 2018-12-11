@@ -203,6 +203,7 @@ namespace {
 						interchangePreheaderInstructions(outerPreheader,innerPreheader);
 						moveBasicBlocks(outerPreheader, outerHeader, outerLatch, innerPreheader, innerHeader, innerBody, innerLatch);
 						moveBranches(outerPreheader, outerHeader, outerBSS, outerLatch, innerPreheader, innerHeader, innerBody, innerLatch, retBlock);
+						errs() << "Loop pair interchanged!\n";
 					}
 				}
 			}
