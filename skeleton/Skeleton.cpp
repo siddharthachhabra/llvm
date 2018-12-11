@@ -191,6 +191,8 @@ namespace {
 							errs() << "No Dependence!\n";
 						}
 
+						// Uncomment for Task-1.
+						/*
 						//Saving operand of return block for future use.
 						Instruction *ret;
 						for(auto &I:*outerHeader){
@@ -204,6 +206,7 @@ namespace {
 						moveBasicBlocks(outerPreheader, outerHeader, outerLatch, innerPreheader, innerHeader, innerBody, innerLatch);
 						moveBranches(outerPreheader, outerHeader, outerBSS, outerLatch, innerPreheader, innerHeader, innerBody, innerLatch, retBlock);
 						errs() << "Loop pair interchanged!\n";
+						*/
 					}
 				}
 			}
